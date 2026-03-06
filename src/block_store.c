@@ -1,8 +1,8 @@
 #include <stdio.h>
 #include <stdint.h>
 
-#include "bitmap.h"
-#include "block_store.h"
+#include "../include/bitmap.h"
+#include "../include/block_store.h"
 // include more if you need
 
 struct block_store  {
@@ -17,12 +17,37 @@ struct block_store  {
 
 block_store_t *block_store_create()
 {
-	return NULL;
+	block_store_t *bs = malloc(sizeof(block_store_t));
+	if (!bs) {
+		return NULL;
+	}
+	bs->allocated_blocks = 0;
+
+	// allocate block storage
+	bs->total_stored = calloc(BLOCK_STORE_NUM_BLOCKS, BLOCK_SIZE_BYTES);
+	if (!bs->total_stored) {
+		free(bs);
+		return NULL;
+	}
+
+	// allocate bitmap
+	bs->bitmap = calloc(BLOCK_STORE_NUM_BLOCKS, BLOCK_SIZE_BYTES);
+	if (!bs->bitmap) {
+		free(bs->total_stored);
+		free(bs);
+		return NULL;
+	}
+	return bs;
 }
 
 void block_store_destroy(block_store_t *const bs)
 {
-	UNUSED(bs);
+	if (!bs) {
+		return;
+	}
+	free(bs->total_stored);
+	free(bs->bitmap);
+	free(bs);
 }
 
 size_t block_store_allocate(block_store_t *const bs)
