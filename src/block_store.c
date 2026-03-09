@@ -21,10 +21,10 @@ block_store_t *block_store_create()
 	if (!bs) {
 		return NULL;
 	}
-	bs->allocated_blocks = 0;
+	bs->allocated_blocks = BITMAP_NUM_BLOCKS;
 
 	// allocate block storage
-	bs->total_stored = calloc(BLOCK_STORE_NUM_BLOCKS, BLOCK_SIZE_BYTES);
+	bs->total_stored = calloc(BLOCK_STORE_NUM_BLOCKS, sizeof(uint8_t));
 	if (!bs->total_stored) {
 		free(bs);
 		return NULL;
@@ -37,6 +37,13 @@ block_store_t *block_store_create()
 		free(bs);
 		return NULL;
 	}
+
+	//Sets initial block of memory as used to show the start of memory allocated for the whole store.
+	for(int i = BITMAP_START_BLOCK; i < BITMAP_START_BLOCK + BITMAP_NUM_BLOCKS; i++)
+	{
+		bs->bitmap[i] = 1;
+	}
+
 	return bs;
 }
 
@@ -52,15 +59,47 @@ void block_store_destroy(block_store_t *const bs)
 
 size_t block_store_allocate(block_store_t *const bs)
 {
-	UNUSED(bs);
-	return 0;
+	//Checks null
+	if(bs == NULL) {
+		return SIZE_MAX;
+	}
+
+	//Loops through every block for the allocated store
+	for(size_t i = 0; i < BLOCK_STORE_NUM_BLOCKS; i++)
+	{
+		//If the bitmap at that location is not used gets set to 1 and allocated blocks is incremented
+		if(bs->bitmap[i] == 0)
+		{
+			bs->bitmap[i] = 1;
+			bs->allocated_blocks++;
+			return i;
+		}
+	}
+	return SIZE_MAX;
 }
 
 bool block_store_request(block_store_t *const bs, const size_t block_id)
 {
-	UNUSED(bs);
-	UNUSED(block_id);
-	return false;
+	//checks invalid parameters
+	if(!bs || block_id >= BLOCK_STORE_NUM_BLOCKS) {
+		return false;
+	}
+
+	//Makes sure the request is in the valid range of memory allocated
+	if(block_id >= BITMAP_START_BLOCK && block_id < BITMAP_START_BLOCK + BITMAP_NUM_BLOCKS) {
+		return false;
+	}
+
+	//Makes sure the block isn't already in use.
+	if(bs->bitmap[block_id] == 1)
+	{
+		return false;
+	}
+
+	//Sets the block for block_id as in use and increments allocated blocks.
+	bs->bitmap[block_id] = 1;
+	bs->allocated_blocks++;
+	return true;
 }
 
 void block_store_release(block_store_t *const bs, const size_t block_id)
