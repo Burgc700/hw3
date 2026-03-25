@@ -7,7 +7,7 @@
 
 struct block_store  {
         uint8_t *total_stored;  //Blocks off the right amount of storage needed to store the block_store
-        uint8_t *bitmap;        //Tracks each block to determine if it has been allocated or is still free
+        bitmap_t *bitmap;        //Tracks each block to determine if it has been allocated or is still free
         size_t allocated_blocks; //Gives the count of blocks that have been allocated
 };
 
@@ -31,7 +31,7 @@ block_store_t *block_store_create()
 	}
 
 	// allocate bitmap
-	bs->bitmap = calloc(BLOCK_STORE_NUM_BLOCKS, BLOCK_SIZE_BYTES);
+	bs->bitmap = bitmap_create(BLOCK_STORE_NUM_BLOCKS);
 	if (!bs->bitmap) {
 		free(bs->total_stored);
 		free(bs);
@@ -41,7 +41,7 @@ block_store_t *block_store_create()
 	//Sets initial block of memory as used to show the start of memory allocated for the whole store.
 	for(int i = BITMAP_START_BLOCK; i < BITMAP_START_BLOCK + BITMAP_NUM_BLOCKS; i++)
 	{
-		bs->bitmap[i] = 1;
+		bitmap_set(bs->bitmap, i);
 	}
 
 	return bs;
@@ -53,7 +53,7 @@ void block_store_destroy(block_store_t *const bs)
 		return;
 	}
 	free(bs->total_stored);
-	free(bs->bitmap);
+	bitmap_destroy(bs->bitmap);
 	free(bs);
 }
 
@@ -68,9 +68,9 @@ size_t block_store_allocate(block_store_t *const bs)
 	for(size_t i = 0; i < BLOCK_STORE_NUM_BLOCKS; i++)
 	{
 		//If the bitmap at that location is not used gets set to 1 and allocated blocks is incremented
-		if(bs->bitmap[i] == 0)
+		if(!bitmap_test(bs->bitmap, i))
 		{
-			bs->bitmap[i] = 1;
+			bitmap_set(bs->bitmap, i);
 			bs->allocated_blocks++;
 			return i;
 		}
@@ -91,13 +91,13 @@ bool block_store_request(block_store_t *const bs, const size_t block_id)
 	}
 
 	//Makes sure the block isn't already in use.
-	if(bs->bitmap[block_id] == 1)
+	if(bitmap_test(bs->bitmap, block_id))
 	{
 		return false;
 	}
 
 	//Sets the block for block_id as in use and increments allocated blocks.
-	bs->bitmap[block_id] = 1;
+	bitmap_set(bs->bitmap, block_id);
 	bs->allocated_blocks++;
 	return true;
 }
@@ -109,7 +109,7 @@ void block_store_release(block_store_t *const bs, const size_t block_id)
 	if(block_id >= BITMAP_START_BLOCK && block_id < BITMAP_START_BLOCK + BITMAP_NUM_BLOCKS) return;
 
 	// release the block
-	bs->bitmap[block_id] = 0;
+	bitmap_reset(bs->bitmap, block_id);
 	bs->allocated_blocks--;
 }
 
