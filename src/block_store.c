@@ -132,18 +132,46 @@ size_t block_store_get_total_blocks()
 
 size_t block_store_read(const block_store_t *const bs, const size_t block_id, void *buffer)
 {
-	UNUSED(bs);
-	UNUSED(block_id);
-	UNUSED(buffer);
-	return 0;
+	//Checks to make sure the blockstore and buffer isn't null
+    if(bs == NULL || buffer == NULL)
+    {
+        return 0;
+    }
+    //Makes sure block_id is with in the bounds of what we have allocated.
+    if(block_id >= BLOCK_STORE_NUM_BLOCKS)
+    {
+        return 0;
+    }
+    //Makes sure that block has something in it.
+    if(!bitmap_test(bs->bitmap, block_id))
+    {
+        return 0;
+    }
+    //Copies the bytes from the buffer to the stored total and stores the number of bytes read  to the block size bytes variable.
+    memcpy(buffer, bs->total_stored + (block_id * BLOCK_SIZE_BYTES), BLOCK_SIZE_BYTES);
+    return BLOCK_SIZE_BYTES;
 }
 
 size_t block_store_write(block_store_t *const bs, const size_t block_id, const void *buffer)
 {
-	UNUSED(bs);
-	UNUSED(block_id);
-	UNUSED(buffer);
-	return 0;
+	//Checks to make sure the blockstore and buffer isn't null
+    if(bs == NULL || buffer == NULL)
+    {
+        return 0;
+    }
+    //Makes sure block_id is with in the bounds of what we have allocated.
+    if(block_id >= BLOCK_STORE_NUM_BLOCKS)
+    {
+        return 0;
+    }
+    //Makes sure that block has something in it.
+    if(!bitmap_test(bs->bitmap, block_id))
+    {
+        return 0;
+    }
+    //Copies the bytes from the total stored to the buffer, and stores the number of bytes writen in block size bytes variable.
+    memcpy(bs->total_stored + (block_id * BLOCK_SIZE_BYTES), buffer, BLOCK_SIZE_BYTES);
+    return BLOCK_SIZE_BYTES;
 }
 
 block_store_t *block_store_deserialize(const char *const filename)
