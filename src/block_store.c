@@ -4,6 +4,7 @@
 #include "../include/bitmap.h"
 #include "../include/block_store.h"
 // include more if you need
+#include <string.h>
 
 struct block_store  {
         uint8_t *total_stored;  //Blocks off the right amount of storage needed to store the block_store
@@ -115,14 +116,22 @@ void block_store_release(block_store_t *const bs, const size_t block_id)
 
 size_t block_store_get_used_blocks(const block_store_t *const bs)
 {
-	UNUSED(bs);
-	return 0;
+	//Checks to ensure the blockstore isn't null
+	if (bs == NULL) {
+		return SIZE_MAX;
+	}
+	//Returns number of used blocks
+	return bitmap_total_set(bs->bitmap);
 }
 
 size_t block_store_get_free_blocks(const block_store_t *const bs)
 {
-	UNUSED(bs);
-	return 0;
+	//Checks to ensure the blockstore ins't null
+	if (bs == NULL) {
+		return SIZE_MAX;
+	}
+	//Returns number of free blocks
+	return BLOCK_STORE_NUM_BLOCKS - bitmap_total_set(bs->bitmap);
 }
 
 size_t block_store_get_total_blocks()
