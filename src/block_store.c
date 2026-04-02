@@ -5,6 +5,9 @@
 #include "../include/block_store.h"
 // include more if you need
 #include <string.h>
+//The two below are needed for POSIX I think
+#include <fcntl.h>    // open(), O_RDONLY, O_WRONLY, etc.
+#include <unistd.h>   // read(), write(), close()
 
 struct block_store  {
         uint8_t *total_stored;  //Blocks off the right amount of storage needed to store the block_store
@@ -183,15 +186,151 @@ size_t block_store_write(block_store_t *const bs, const size_t block_id, const v
     return BLOCK_SIZE_BYTES;
 }
 
+
 block_store_t *block_store_deserialize(const char *const filename)
 {
-	UNUSED(filename);
-	return NULL;
+	if (!filename) return NULL;
+
+    int fd = open(filename, O_RDONLY);
+    if (fd < 0) return NULL;
+
+    block_store_t *bs = block_store_create();
+    if (!bs) {
+        close(fd);
+        return NULL;
+    }
+
+    //Allocated blocks
+    size_t total = 0;
+    while (total < sizeof(size_t)) {
+        ssize_t bytes = read(fd, ((uint8_t *)&bs->allocated_blocks) + total,
+                             sizeof(size_t) - total);
+        if (bytes <= 0) {
+            close(fd);
+            block_store_destroy(bs);
+            return NULL;
+        }
+        total += bytes;
+    }
+
+    //Bitmap
+    size_t bitmap_bytes = bitmap_get_bytes(bs->bitmap);
+    uint8_t *buffer = malloc(bitmap_bytes);
+    if (!buffer) {
+        close(fd);
+        block_store_destroy(bs);
+        return NULL;
+    }
+
+    total = 0;
+    while (total < bitmap_bytes) {
+        ssize_t bytes = read(fd, buffer + total, bitmap_bytes - total);
+        if (bytes <= 0) {
+            free(buffer);
+            close(fd);
+            block_store_destroy(bs);
+            return NULL;
+        }
+        total += bytes;
+    }
+
+    size_t bitmap_bits = BLOCK_STORE_NUM_BLOCKS;
+
+    bitmap_destroy(bs->bitmap);
+    bs->bitmap = bitmap_import(bitmap_bits, buffer);
+    free(buffer);
+
+    if (!bs->bitmap) {
+        close(fd);
+        block_store_destroy(bs);
+        return NULL;
+    }
+
+    //Block storage
+    size_t storage_bytes = BLOCK_STORE_NUM_BLOCKS * BLOCK_SIZE_BYTES;
+
+    total = 0;
+    while (total < storage_bytes) {
+        ssize_t bytes = read(fd, ((uint8_t *)bs->total_stored) + total,
+                             storage_bytes - total);
+        if (bytes <= 0) {
+            close(fd);
+            block_store_destroy(bs);
+            return NULL;
+        }
+        total += bytes;
+    }
+
+    close(fd);
+    return bs;
 }
 
 size_t block_store_serialize(const block_store_t *const bs, const char *const filename)
 {
-	UNUSED(bs);
-	UNUSED(filename);
-	return 0;
-}
+	if (!bs || !filename) return 0;
+
+    int fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (fd < 0) return 0;
+
+    size_t total_written = 0;
+
+    //Allocated blocks
+    size_t total = 0;
+    while (total < sizeof(size_t)) {
+        ssize_t bytes = write(fd, ((uint8_t *)&bs->allocated_blocks) + total,
+                              sizeof(size_t) - total);
+        if (bytes <= 0) {
+            close(fd);
+            return 0;
+        }
+        total += bytes;
+    }
+    total_written += sizeof(size_t);
+
+    //Bitmap
+    size_t bitmap_bytes = bitmap_get_bytes(bs->bitmap);
+    const uint8_t *bitmap_data = bitmap_export(bs->bitmap);
+
+    total = 0;
+    while (total < bitmap_bytes) {
+        ssize_t bytes = write(fd, bitmap_data + total, bitmap_bytes - total);
+        if (bytes <= 0) {
+            close(fd);
+            return 0;
+        }
+        total += bytes;
+    }
+    total_written += bitmap_bytes;
+
+    //Block storage
+    size_t storage_bytes = BLOCK_STORE_NUM_BLOCKS * BLOCK_SIZE_BYTES;
+
+    total = 0;
+    while (total < storage_bytes) {
+        ssize_t bytes = write(fd, ((uint8_t *)bs->total_stored) + total,
+                              storage_bytes - total);
+        if (bytes <= 0) {
+            close(fd);
+            return 0;
+        }
+        total += bytes;
+    }
+    total_written += storage_bytes;
+
+    //Padding
+    if (total_written < BLOCK_STORE_NUM_BYTES) {
+        size_t padding = BLOCK_STORE_NUM_BYTES - total_written;
+        uint8_t zero = 0;
+
+        for (size_t i = 0; i < padding; i++) {
+            if (write(fd, &zero, 1) != 1) {
+                close(fd);
+                return 0;
+            }
+        }
+        total_written += padding;
+    }
+
+    close(fd);
+    return total_written;
+}		
