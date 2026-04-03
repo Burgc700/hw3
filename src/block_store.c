@@ -15,10 +15,6 @@ struct block_store  {
         size_t allocated_blocks; //Gives the count of blocks that have been allocated
 };
 
-// You might find this handy. I put it around unused parameters, but you should
-// remove it before you submit. Just allows things to compile initially.
-#define UNUSED(x) (void)(x)
-
 block_store_t *block_store_create()
 {
 	block_store_t *bs = malloc(sizeof(block_store_t));
@@ -28,14 +24,15 @@ block_store_t *block_store_create()
 	bs->allocated_blocks = BITMAP_NUM_BLOCKS;
 
 	// allocate block storage
-	bs->total_stored = calloc(BLOCK_STORE_NUM_BLOCKS, sizeof(uint8_t));
+	bs->total_stored = calloc(BLOCK_STORE_NUM_BLOCKS * BLOCK_SIZE_BYTES, sizeof(uint8_t));
 	if (!bs->total_stored) {
 		free(bs);
 		return NULL;
 	}
 
-	// allocate bitmap
-	bs->bitmap = bitmap_create(BLOCK_STORE_NUM_BLOCKS);
+	// place bitmap directly inside total_stored at BITMAP_START_BLOCK
+	bs->bitmap = bitmap_overlay(BLOCK_STORE_NUM_BLOCKS,
+    bs->total_stored + (BITMAP_START_BLOCK * BLOCK_SIZE_BYTES));
 	if (!bs->bitmap) {
 		free(bs->total_stored);
 		free(bs);
@@ -56,8 +53,8 @@ void block_store_destroy(block_store_t *const bs)
 	if (!bs) {
 		return;
 	}
-	free(bs->total_stored);
 	bitmap_destroy(bs->bitmap);
+	free(bs->total_stored);
 	free(bs);
 }
 
@@ -189,8 +186,7 @@ size_t block_store_write(block_store_t *const bs, const size_t block_id, const v
 
 block_store_t *block_store_deserialize(const char *const filename)
 {
-	if (!filename) return NULL;
-
+    if (!filename) return NULL;
     int fd = open(filename, O_RDONLY);
     if (fd < 0) return NULL;
 
@@ -200,56 +196,9 @@ block_store_t *block_store_deserialize(const char *const filename)
         return NULL;
     }
 
-    //Allocated blocks
+    // read raw block storage
+    size_t storage_bytes = BLOCK_STORE_NUM_BYTES;
     size_t total = 0;
-    while (total < sizeof(size_t)) {
-        ssize_t bytes = read(fd, ((uint8_t *)&bs->allocated_blocks) + total,
-                             sizeof(size_t) - total);
-        if (bytes <= 0) {
-            close(fd);
-            block_store_destroy(bs);
-            return NULL;
-        }
-        total += bytes;
-    }
-
-    //Bitmap
-    size_t bitmap_bytes = bitmap_get_bytes(bs->bitmap);
-    uint8_t *buffer = malloc(bitmap_bytes);
-    if (!buffer) {
-        close(fd);
-        block_store_destroy(bs);
-        return NULL;
-    }
-
-    total = 0;
-    while (total < bitmap_bytes) {
-        ssize_t bytes = read(fd, buffer + total, bitmap_bytes - total);
-        if (bytes <= 0) {
-            free(buffer);
-            close(fd);
-            block_store_destroy(bs);
-            return NULL;
-        }
-        total += bytes;
-    }
-
-    size_t bitmap_bits = BLOCK_STORE_NUM_BLOCKS;
-
-    bitmap_destroy(bs->bitmap);
-    bs->bitmap = bitmap_import(bitmap_bits, buffer);
-    free(buffer);
-
-    if (!bs->bitmap) {
-        close(fd);
-        block_store_destroy(bs);
-        return NULL;
-    }
-
-    //Block storage
-    size_t storage_bytes = BLOCK_STORE_NUM_BLOCKS * BLOCK_SIZE_BYTES;
-
-    total = 0;
     while (total < storage_bytes) {
         ssize_t bytes = read(fd, ((uint8_t *)bs->total_stored) + total,
                              storage_bytes - total);
@@ -262,75 +211,38 @@ block_store_t *block_store_deserialize(const char *const filename)
     }
 
     close(fd);
+
+    // restore the bitmap from block 127
+    bitmap_destroy(bs->bitmap);
+		bs->bitmap = bitmap_overlay(BLOCK_STORE_NUM_BLOCKS,
+		    bs->total_stored + (BITMAP_START_BLOCK * BLOCK_SIZE_BYTES));
+    if (!bs->bitmap) {
+        block_store_destroy(bs);
+        return NULL;
+    }
+
     return bs;
 }
 
 size_t block_store_serialize(const block_store_t *const bs, const char *const filename)
 {
-	if (!bs || !filename) return 0;
-
+    if (!bs || !filename) return 0;
     int fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (fd < 0) return 0;
 
-    size_t total_written = 0;
-
-    //Allocated blocks
+    // write the raw block storage, bitmap is already embedded within
     size_t total = 0;
-    while (total < sizeof(size_t)) {
-        ssize_t bytes = write(fd, ((uint8_t *)&bs->allocated_blocks) + total,
-                              sizeof(size_t) - total);
-        if (bytes <= 0) {
-            close(fd);
-            return 0;
-        }
-        total += bytes;
-    }
-    total_written += sizeof(size_t);
 
-    //Bitmap
-    size_t bitmap_bytes = bitmap_get_bytes(bs->bitmap);
-    const uint8_t *bitmap_data = bitmap_export(bs->bitmap);
-
-    total = 0;
-    while (total < bitmap_bytes) {
-        ssize_t bytes = write(fd, bitmap_data + total, bitmap_bytes - total);
-        if (bytes <= 0) {
-            close(fd);
-            return 0;
-        }
-        total += bytes;
-    }
-    total_written += bitmap_bytes;
-
-    //Block storage
-    size_t storage_bytes = BLOCK_STORE_NUM_BLOCKS * BLOCK_SIZE_BYTES;
-
-    total = 0;
-    while (total < storage_bytes) {
+    while (total < BLOCK_STORE_NUM_BYTES) {
         ssize_t bytes = write(fd, ((uint8_t *)bs->total_stored) + total,
-                              storage_bytes - total);
+        		BLOCK_STORE_NUM_BYTES - total);
         if (bytes <= 0) {
             close(fd);
             return 0;
         }
         total += bytes;
-    }
-    total_written += storage_bytes;
-
-    //Padding
-    if (total_written < BLOCK_STORE_NUM_BYTES) {
-        size_t padding = BLOCK_STORE_NUM_BYTES - total_written;
-        uint8_t zero = 0;
-
-        for (size_t i = 0; i < padding; i++) {
-            if (write(fd, &zero, 1) != 1) {
-                close(fd);
-                return 0;
-            }
-        }
-        total_written += padding;
     }
 
     close(fd);
-    return total_written;
-}		
+    return total; // should return exactly BLOCK_STORE_NUM_BYTES
+}
